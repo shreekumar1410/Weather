@@ -1,26 +1,51 @@
 // Replace with your actual WeatherAPI.com key
 const API_KEY = '6b3f945bdf9f40dab4e174635251504'; // Get from https://www.weatherapi.com/
+let currentUnit = 'c'; // 'c' for Celsius, 'f' for Fahrenheit
+let recentCities = JSON.parse(localStorage.getItem('recentCities')) || [];
+let darkMode = localStorage.getItem('darkMode') === 'true';
 
 // DOM Elements
-const cityInput = document.getElementById('city-input');
-const searchBtn = document.getElementById('search-btn');
-const cityName = document.getElementById('city-name');
-const tempElement = document.getElementById('temp');
-const weatherIcon = document.getElementById('weather-icon');
-const weatherDesc = document.getElementById('weather-desc');
-const feelsLike = document.getElementById('feels-like');
-const humidity = document.getElementById('humidity');
-const windSpeed = document.getElementById('wind-speed');
-const pressure = document.getElementById('pressure');
-const localTimeElement = document.createElement('div');
-localTimeElement.className = 'local-time';
-document.querySelector('.weather-info').prepend(localTimeElement);
+const elements = {
+    cityInput: document.getElementById('city-input'),
+    searchBtn: document.getElementById('search-btn'),
+    unitToggle: document.getElementById('unit-toggle'),
+    themeToggle: document.getElementById('theme-toggle'),
+    cityName: document.querySelector('.city-name'),
+    localTime: document.querySelector('.local-time'),
+    temperature: document.querySelector('.temperature'),
+    weatherIcon: document.querySelector('.weather-icon'),
+    weatherDesc: document.querySelector('.weather-desc'),
+    feelsLike: document.getElementById('feels-like'),
+    humidity: document.getElementById('humidity'),
+    windSpeed: document.getElementById('wind-speed'),
+    pressure: document.getElementById('pressure'),
+    forecastDays: document.getElementById('forecast-days'),
+    recentList: document.querySelector('.recent-list'),
+    unitElements: document.querySelectorAll('.unit, .unit-small')
+};
+
+// Initialize theme
+function initTheme() {
+    if (darkMode) {
+        document.body.classList.add('dark-mode');
+        elements.themeToggle.innerHTML = '<i class="fas fa-sun"></i> Light Mode';
+    } else {
+        document.body.classList.remove('dark-mode');
+        elements.themeToggle.innerHTML = '<i class="fas fa-moon"></i> Dark Mode';
+    }
+}
+
+// Toggle dark/light theme
+function toggleTheme() {
+    darkMode = !darkMode;
+    localStorage.setItem('darkMode', darkMode);
+    initTheme();
+}
 
 // Time formatting options
 const timeOptions = {
     hour: '2-digit',
     minute: '2-digit',
-    second: '2-digit',
     hour12: true
 };
 
@@ -33,11 +58,42 @@ const dateOptions = {
 
 let timeInterval;
 
+// Initialize the app
+window.addEventListener('load', () => {
+    initTheme();
+    updateRecentCities();
+    detectLocation();
+});
+
+// Detect user's location
+function detectLocation() {
+    elements.cityName.textContent = "Detecting your location...";
+    elements.weatherDesc.textContent = "Please allow location access";
+    
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            position => {
+                const { latitude, longitude } = position.coords;
+                fetchWeatherData(`${latitude},${longitude}`);
+            },
+            error => {
+                console.error("Geolocation error:", error);
+                fetchWeatherData('London'); // Fallback to default location
+            }
+        );
+    } else {
+        fetchWeatherData('London'); // Fallback if geolocation not supported
+    }
+}
+
 // Fetch weather data from WeatherAPI.com
 async function fetchWeatherData(query) {
     try {
+        elements.cityName.textContent = "Loading...";
+        elements.weatherDesc.textContent = "Fetching weather data...";
+        
         const response = await fetch(
-            `https://api.weatherapi.com/v1/current.json?key=${API_KEY}&q=${encodeURIComponent(query)}&aqi=no`
+            `https://api.weatherapi.com/v1/forecast.json?key=${API_KEY}&q=${encodeURIComponent(query)}&days=5&aqi=no&alerts=no`
         );
         
         if (!response.ok) {
@@ -45,39 +101,53 @@ async function fetchWeatherData(query) {
             throw new Error(errorData.error.message || 'Location not found');
         }
         
-        return await response.json();
+        const data = await response.json();
+        updateUI(data);
+        addToRecentCities(data.location.name);
     } catch (error) {
         console.error('Error fetching weather data:', error);
         alert(error.message || 'Failed to fetch weather data. Please try again.');
-        return null;
+        elements.cityName.textContent = "Error";
+        elements.weatherDesc.textContent = "Failed to load data";
     }
 }
 
 // Update UI with weather data
-function updateWeatherUI(data) {
-    const location = data.location;
-    const current = data.current;
+function updateUI(data) {
+    const { location, current, forecast } = data;
     
-    // Update city and country
-    cityName.textContent = `${location.name}, ${location.country}`;
+    // Update current weather
+    elements.cityName.textContent = `${location.name}, ${location.country}`;
+    elements.cityInput.value = location.name;
+    updateTemperature(current.temp_c, current.temp_f);
+    elements.weatherIcon.src = `https:${current.condition.icon.replace('64x64', '128x128')}`;
+    elements.weatherIcon.alt = current.condition.text;
+    elements.weatherDesc.textContent = current.condition.text;
+    updateFeelsLike(current.feelslike_c, current.feelslike_f);
+    elements.humidity.textContent = current.humidity;
+    elements.windSpeed.textContent = current.wind_kph;
+    elements.pressure.textContent = current.pressure_mb;
     
-    // Update weather info
-    tempElement.textContent = Math.round(current.temp_c);
-    weatherDesc.textContent = current.condition.text;
-    feelsLike.textContent = Math.round(current.feelslike_c);
-    humidity.textContent = current.humidity;
-    windSpeed.textContent = Math.round(current.wind_kph);
-    pressure.textContent = current.pressure_mb;
-    
-    // Update weather icon
-    weatherIcon.src = `https:${current.condition.icon}`;
-    weatherIcon.alt = current.condition.text;
-    
-    // Update and start live time for the location
+    // Update local time
     updateLocalTime(location.localtime_epoch, location.tz_id);
+    
+    // Update forecast
+    updateForecast(forecast.forecastday);
 }
 
-// Update local time display and set up live updating
+// Update temperature display
+function updateTemperature(celsius, fahrenheit) {
+    const temp = currentUnit === 'c' ? Math.round(celsius) : Math.round(fahrenheit);
+    elements.temperature.innerHTML = `${temp}<span class="unit">°${currentUnit.toUpperCase()}</span>`;
+}
+
+// Update feels like temperature
+function updateFeelsLike(celsius, fahrenheit) {
+    const temp = currentUnit === 'c' ? Math.round(celsius) : Math.round(fahrenheit);
+    elements.feelsLike.textContent = temp;
+}
+
+// Update local time display
 function updateLocalTime(epoch, timezone) {
     if (timeInterval) clearInterval(timeInterval);
     
@@ -88,71 +158,109 @@ function updateLocalTime(epoch, timezone) {
             ...dateOptions,
             timeZone: timezone 
         });
-        localTimeElement.textContent = localTimeStr;
+        elements.localTime.textContent = localTimeStr;
     };
     
     updateTime();
     timeInterval = setInterval(updateTime, 1000);
 }
 
-// Get user's current location
-function getLiveLocation() {
-    return new Promise((resolve, reject) => {
-        if (!navigator.geolocation) {
-            reject(new Error('Geolocation is not supported by your browser'));
-            return;
-        }
+// Update 5-day forecast
+function updateForecast(forecastDays) {
+    elements.forecastDays.innerHTML = '';
+    
+    forecastDays.forEach(day => {
+        const date = new Date(day.date);
+        const dayElement = document.createElement('div');
+        dayElement.className = 'forecast-day';
         
-        navigator.geolocation.getCurrentPosition(
-            position => resolve(`${position.coords.latitude},${position.coords.longitude}`),
-            error => {
-                console.error('Geolocation error:', error);
-                // Fallback to default location if geolocation fails
-                resolve('London');
-            }
-        );
+        dayElement.innerHTML = `
+            <div class="day-name">${date.toLocaleDateString('en-US', { weekday: 'short' })}</div>
+            <img class="forecast-icon" src="https:${day.day.condition.icon}" alt="${day.day.condition.text}">
+            <div class="forecast-temp">
+                <span class="max-temp">${currentUnit === 'c' ? Math.round(day.day.maxtemp_c) : Math.round(day.day.maxtemp_f)}°</span>
+                <span class="min-temp">${currentUnit === 'c' ? Math.round(day.day.mintemp_c) : Math.round(day.day.mintemp_f)}°</span>
+            </div>
+        `;
+        
+        elements.forecastDays.appendChild(dayElement);
     });
 }
 
-// Search by city name
-async function searchByCity(city) {
-    if (city) {
-        const weatherData = await fetchWeatherData(city);
-        if (weatherData) {
-            cityInput.value = weatherData.location.name;
-            updateWeatherUI(weatherData);
+// Add city to recent cities list
+function addToRecentCities(city) {
+    if (!recentCities.includes(city)) {
+        recentCities.unshift(city);
+        if (recentCities.length > 5) {
+            recentCities.pop();
         }
+        localStorage.setItem('recentCities', JSON.stringify(recentCities));
+        updateRecentCities();
     }
 }
 
-// Initialize the app
-async function initApp() {
-    try {
-        // First try to get live location
-        const locationQuery = await getLiveLocation();
-        const weatherData = await fetchWeatherData(locationQuery);
-        
-        if (weatherData) {
-            // If we got location data, update UI
-            cityInput.value = weatherData.location.name;
-            updateWeatherUI(weatherData);
-        } else {
-            // Fallback to default location
-            await searchByCity('London');
-        }
-    } catch (error) {
-        console.error('Initialization error:', error);
-        // Fallback to default location
-        await searchByCity('London');
-    }
+// Update recent cities list in UI
+function updateRecentCities() {
+    elements.recentList.innerHTML = '';
+    
+    recentCities.forEach(city => {
+        const cityElement = document.createElement('div');
+        cityElement.className = 'recent-city';
+        cityElement.textContent = city;
+        cityElement.addEventListener('click', () => {
+            elements.cityInput.value = city;
+            fetchWeatherData(city);
+        });
+        elements.recentList.appendChild(cityElement);
+    });
 }
+
+// Toggle temperature unit
+function toggleTemperatureUnit() {
+    currentUnit = currentUnit === 'c' ? 'f' : 'c';
+    elements.unitToggle.textContent = currentUnit === 'c' ? 'Switch to °F' : 'Switch to °C';
+    
+    document.querySelectorAll('.temperature, .max-temp, .min-temp, #feels-like').forEach(el => {
+        if (el.classList.contains('temperature')) {
+            const tempC = parseFloat(el.dataset.celsius) || parseFloat(el.textContent) || 0;
+            const tempF = Math.round((tempC * 9/5) + 32);
+            el.innerHTML = `${currentUnit === 'c' ? Math.round(tempC) : tempF}<span class="unit">°${currentUnit.toUpperCase()}</span>`;
+            el.dataset.celsius = tempC;
+            el.dataset.fahrenheit = tempF;
+        } else if (el.id === 'feels-like') {
+            const tempC = parseFloat(el.dataset.celsius) || parseFloat(el.textContent) || 0;
+            const tempF = Math.round((tempC * 9/5) + 32);
+            el.textContent = currentUnit === 'c' ? Math.round(tempC) : tempF;
+            el.dataset.celsius = tempC;
+            el.dataset.fahrenheit = tempF;
+        } else {
+            const tempC = parseFloat(el.dataset.celsius) || parseFloat(el.textContent) || 0;
+            const tempF = Math.round((tempC * 9/5) + 32);
+            el.textContent = currentUnit === 'c' ? Math.round(tempC) : tempF;
+            el.dataset.celsius = tempC;
+            el.dataset.fahrenheit = tempF;
+        }
+    });
+}
+    
+    // Update unit labels
+//     elements.unitElements.forEach(el => {
+//         el.textContent = `°${currentUnit.toUpperCase()}`;
+//     });
+// }
 
 // Event listeners
-searchBtn.addEventListener('click', () => searchByCity(cityInput.value.trim()));
-
-cityInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') searchByCity(cityInput.value.trim());
+elements.searchBtn.addEventListener('click', () => {
+    const city = elements.cityInput.value.trim();
+    if (city) fetchWeatherData(city);
 });
 
-// Initialize when page loads
-window.addEventListener('load', initApp);
+elements.cityInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+        const city = elements.cityInput.value.trim();
+        if (city) fetchWeatherData(city);
+    }
+});
+
+elements.unitToggle.addEventListener('click', toggleTemperatureUnit);
+elements.themeToggle.addEventListener('click', toggleTheme);
